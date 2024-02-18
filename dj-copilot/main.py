@@ -2,6 +2,7 @@ import librosa
 import numpy as np
 import pandas as pd
 import os
+from itertools import combinations
 from scipy.signal import butter, lfilter
 
 def butter_lowpass(cutoff, sr, order=5):
@@ -22,6 +23,7 @@ def transient_compatability():
 
 
 def get_features(filepath):
+    print(filepath)
     y, sr = librosa.load(filepath)
     onset_env = librosa.onset.onset_strength(y=y, sr=sr)
     tempo, beats = librosa.beat.beat_track(onset_envelope=onset_env, sr=sr)
@@ -45,15 +47,49 @@ def get_features(filepath):
 
 def data_preprocessing():
     df = pd.DataFrame()
-    directory = './dj-copilot/test'
+    directory = './dj-copilot/songs'
     filenames = [filename for filename in os.listdir(directory)]
     df['Name'] = filenames
-    df[['y', 'sr', 'Tempo', 'Energy', 'Transients_Percussive', 'Transients_Bass']] = df['Name'].apply(lambda x: pd.Series(get_features(os.path.join(directory, x))))
+    df[['y', 'sr', 'Tempo', 'Energy', 'Median_Bass_Interval']] = df['Name'].apply(lambda x: pd.Series(get_features(os.path.join(directory, x))))
     df.to_csv('songs.csv', index=False)
+    return df
+
+def define_and_solve_csp(df):
+    def bpm_constraint(song1, song2):
+        bpm_diff = abs(df.at[song1, 'Tempo'] - df.at[song2, 'Tempo'])
+        return bpm_diff <= 8
+
+    def energy_similarity(song1, song2):
+        energy_diff = abs(df.at[song1, 'Energy'] - df.at[song2, 'Energy'])
+        return energy_diff
+    
+    def bass_intervals_constraint(song1, song2):
+        bi1 = df.at[song1, 'Median_Bass_Interval']
+        bpm1 = df.at[song1, 'Tempo']
+        bpm2 = df.at[song2, 'Tempo']
+        bi2 = df.at[song1, 'Median_Bass_Interval'] * bpm1 / bpm2
+        print(df.at[song1, 'Name'], df.at[song2, 'Name'], abs(bi1 / bi2 - np.round(bi1 / bi2)) <= 0.05)
+        return abs(bi1 / bi2 - np.round(bi1 / bi2)) <= 0.05
+
+    compatibility_scores = {}
+    for song1, song2 in combinations(df.index, 2):
+        if bpm_constraint(song1, song2) and bass_intervals_constraint(song1, song2):
+            score = energy_similarity(song1, song2)
+            compatibility_scores.setdefault(song1, []).append((song2, score))
+            compatibility_scores.setdefault(song2, []).append((song1, score))
+
+    for song, compatibilities in compatibility_scores.items():
+        compatibilities.sort(key=lambda x: x[1]) 
+
+    for song, compatibilities in compatibility_scores.items():
+        print(f"Compatible songs for {df.at[song, 'Name']} (sorted by compatibility):")
+        for compatible_song, score in compatibilities:
+            print(f"  - {df.at[compatible_song, 'Name']}: Compatibility score = {score}")
 
 def main():
-
-    data_preprocessing()
+    #df = data_preprocessing()
+    df = pd.read_csv('songs.csv')
+    define_and_solve_csp(df)
 
 
 if __name__ == "__main__":
