@@ -4,6 +4,7 @@ import pandas as pd
 import os
 from itertools import combinations
 from scipy.signal import butter, lfilter
+import key_finder
 
 def butter_lowpass(cutoff, sr, order=5):
     nyq = 0.5 * sr
@@ -15,12 +16,6 @@ def lowpass_filter(data, cutoff, sr, order=5):
     b, a = butter_lowpass(cutoff, sr, order=order)
     y = lfilter(b, a, data)
     return y
-
-print("Current Working Directory: ", os.getcwd())
-
-def transient_compatability():
-    pass
-
 
 def get_features(filepath):
     print(filepath)
@@ -42,7 +37,10 @@ def get_features(filepath):
     # spectral_centroids = np.mean(librosa.feature.spectral_centroid(y=y, sr=sr))
     # spectral_bandwidth = np.mean(librosa.feature.spectral_bandwidth(y=y, sr=sr))
     #energy = (energy_rms + spectral_centroids + spectral_bandwidth) / 3
-    return y, sr, round(tempo), energy_rms, median_bass_interval
+    tonal_fragment = key_finder.Tonal_Fragment(y, sr)
+    song_key = tonal_fragment.key
+    print(song_key)
+    return y, sr, round(tempo), energy_rms, median_bass_interval, song_key
 
 
 def data_preprocessing():
@@ -50,7 +48,7 @@ def data_preprocessing():
     directory = './dj-copilot/songs'
     filenames = [filename for filename in os.listdir(directory)]
     df['Name'] = filenames
-    df[['y', 'sr', 'Tempo', 'Energy', 'Median_Bass_Interval']] = df['Name'].apply(lambda x: pd.Series(get_features(os.path.join(directory, x))))
+    df[['y', 'sr', 'Tempo', 'Energy', 'Median_Bass_Interval', 'Key']] = df['Name'].apply(lambda x: pd.Series(get_features(os.path.join(directory, x))))
     df.to_csv('songs.csv', index=False)
     return df
 
@@ -70,11 +68,19 @@ def define_and_solve_csp(df):
         bi2 = df.at[song1, 'Median_Bass_Interval'] * bpm1 / bpm2
         print(df.at[song1, 'Name'], df.at[song2, 'Name'], abs(bi1 / bi2 - np.round(bi1 / bi2)) <= 0.05)
         return abs(bi1 / bi2 - np.round(bi1 / bi2)) <= 0.05
+    
+    def key_comparison(song1, song2):
+        key1 = df.at[song1, 'Key']
+        key2 = df.at[song2, 'Key']
+        if key1 == key2:
+            return 1
+        else:
+            return 0
 
     compatibility_scores = {}
     for song1, song2 in combinations(df.index, 2):
         if bpm_constraint(song1, song2) and bass_intervals_constraint(song1, song2):
-            score = energy_similarity(song1, song2)
+            score = energy_similarity(song1, song2) + key_comparison(song1, song2)
             compatibility_scores.setdefault(song1, []).append((song2, score))
             compatibility_scores.setdefault(song2, []).append((song1, score))
 
@@ -87,8 +93,8 @@ def define_and_solve_csp(df):
             print(f"  - {df.at[compatible_song, 'Name']}: Compatibility score = {score}")
 
 def main():
-    #df = data_preprocessing()
-    df = pd.read_csv('songs.csv')
+    df = data_preprocessing()
+    #df = pd.read_csv('songs.csv')
     define_and_solve_csp(df)
 
 
